@@ -90,11 +90,12 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Store the current date in YYYY-mm-DD-HHMMSS
 DATE=$(date -u "+%F-%H%M%S")
 FILE_NAME="backup-$DATE"
-ARCHIVE_NAME="$HOSTNAME/$FILE_NAME.tar.gz"
+ARCHIVE_NAME="$FILE_NAME.tar.gz"
 CMD_OPTS="--host $MONGODB_HOST"
+echo "ARCHIVE_NAME: $ARCHIVE_NAME"
 
 # create local backup path
-mkdir -p $BACKUP_PATH/$HOSTNAME
+mkdir -p $DIR/$BACKUP_PATH
 
 if [ $MONGODB_USER ]
 then
@@ -105,19 +106,14 @@ if [ $MONGODB_PASSWORD ]
 then
   CMD_OPTS="$CMD_OPTS -password $MONGODB_PASSWORD"
 fi
-
-# Lock the database
-# Note there is a bug in mongo 2.2.0 where you must touch all the databases before you run mongodump
-# mongo -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" admin --eval "var databaseNames = db.getMongo().getDBNames(); for (var i in databaseNames) { printjson(db.getSiblingDB(databaseNames[i]).getCollectionNames()) }; printjson(db.fsyncLock());"
+echo "output path for mongodump: $DIR/$BACKUP_PATH/$FILE_NAME"
 
 # Dump the database
-mongodump $CMD_OPTS --out $DIR/$BACKUP_PATH/$FILE_NAME
-
-# Unlock the database
-# mongo -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" admin --eval "printjson(db.fsyncUnlock());"
+mongodump $CMD_OPTS -o $DIR/$BACKUP_PATH/$FILE_NAME
 
 # Tar Gzip the file
 tar -C $DIR/$BACKUP_PATH/ -zcvf $DIR/$BACKUP_PATH/$ARCHIVE_NAME $FILE_NAME/
+echo "compressing file to: $DIR/$BACKUP_PATH/$ARCHIVE_NAME"
 
 # Remove the backup directory
 rm -r $DIR/$BACKUP_PATH/$FILE_NAME
@@ -126,7 +122,7 @@ rm -r $DIR/$BACKUP_PATH/$FILE_NAME
 HEADER_DATE=$(date -u "+%a, %d %b %Y %T %z")
 CONTENT_MD5=$(openssl dgst -md5 -binary $DIR/$BACKUP_PATH/$ARCHIVE_NAME | openssl enc -base64)
 CONTENT_TYPE="application/x-download"
-STRING_TO_SIGN="PUT\n$CONTENT_MD5\n$CONTENT_TYPE\n$HEADER_DATE\n/$S3_BUCKET/$ARCHIVE_NAME"
+STRING_TO_SIGN="PUT\n$CONTENT_MD5\n$CONTENT_TYPE\n$HEADER_DATE\n/$S3_BUCKET/$HOSTNAME/$ARCHIVE_NAME"
 SIGNATURE=$(echo -e -n $STRING_TO_SIGN | openssl dgst -sha1 -binary -hmac $AWS_SECRET_KEY | openssl enc -base64)
 
 echo "uploading backup to s3..."
@@ -137,8 +133,9 @@ curl -X PUT \
 --header "Content-MD5: $CONTENT_MD5" \
 --header "Authorization: AWS $AWS_ACCESS_KEY:$SIGNATURE" \
 --upload-file $DIR/backup/$ARCHIVE_NAME \
-https://$S3_BUCKET.s3.amazonaws.com/$ARCHIVE_NAME
+https://$S3_BUCKET.s3.amazonaws.com/$HOSTNAME/$ARCHIVE_NAME
 
 # Remove the archive
-rm -r $DIR/$BACKUP_PATH/$ARCHIVE_NAME
+echo "cleaning up..."
+rm -r $DIR/$BACKUP_PATH
 echo "upload to s3 complete."
